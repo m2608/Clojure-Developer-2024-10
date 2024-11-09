@@ -1,6 +1,12 @@
 (ns otus-02.homework.pangram
-  (:require [clojure.string :as string]))
+  (:require [clojure.string :as s]))
 
+(defn is-pangram
+  "Проверяет, является ли строка панграммой для заданного алфавита. По
+  умолчанию используется английский алфавит."
 
-(defn is-pangram [test-string])
+  ([test-string]
+   (is-pangram test-string "abcdefghijklmnopqrstuvwxyz"))
 
+  ([test-string alphabet]
+   (every? (set (s/lower-case test-string)) alphabet)))

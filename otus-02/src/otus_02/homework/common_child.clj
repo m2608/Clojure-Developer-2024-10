@@ -15,8 +15,31 @@
 
 ;; Еще пример HARRY и SALLY. Ответ будет - 2, так как общий элемент у них AY
 
+(defn subs1
+  "Берет указанный символ из строки, индексация с единицы."
+  [^String s ^Integer i]
+  (subs s (dec i) i))
 
-(defn common-child-length [first-string second-string])
-
-
-
+(defn common-child-length
+  "Считает длину наибольшей общей подпоследовательности для двух строк."
+  [^String s ^String t]
+  (let [;; Для обеих строк считаем длину+1, так просто удобнее для range.
+        [a b] (mapv (comp inc count) [s t])]
+    (last
+      ;; В этом reduce проходим по первой строке. На каждом шаге обновляем
+      ;; список по алгоритму LTS, пока строка не закончится. Инициализируется
+      ;; список нулями.
+      (reduce
+        (fn [prev-row i]
+          ;; В этом reduce проходим по второй строке. На каждом шаге добавлем
+          ;; элемент в curr-row, в итоге получаем новый список для внешнего reduce.
+          (reduce
+            (fn [curr-row j]
+              (conj curr-row
+                    (if (= (subs1 s i) (subs1 t j))
+                      (inc (nth prev-row (dec j)))
+                      (max (nth prev-row j) (last curr-row)))))
+            [0]
+            (range 1 b)))
+        (repeat b 0)
+        (range 1 a)))))
