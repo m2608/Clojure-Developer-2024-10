@@ -229,10 +229,10 @@
 (defn print-sales-for-customer
   "Печатает сумму, потраченную указанным покупателем на все покупки."
   [db customer-name]
-  (if-let [customer (last (select db :customers #(= (:name %) customer-name)))]
+  (if-let [customer (first (select db :customers #(= (:name %) customer-name)))]
     (->> (select db :sales #(= (:custID %) (:custID customer)))
          (map (fn [sale]
-                (let [product (last (select db :products #(= (:prodID %) (:prodID sale))))]
+                (let [product (first (select db :products #(= (:prodID %) (:prodID sale))))]
                   (* (:unitCost product) (:itemCount sale)))))
          (reduce +)
          (format "\n%s: $%.2f" customer-name)
@@ -242,7 +242,7 @@
 (defn print-sales-for-product
   "Печатает количество проданных единиц указанного продукта."
   [db product-name]
-  (if-let [product (last (select db :products #(= (:itemDescription %) product-name)))]
+  (if-let [product (first (select db :products #(= (:itemDescription %) product-name)))]
     (->> (select db :sales #(= (:prodID %) (:prodID product)))
          (map :itemCount)
          (reduce +)
