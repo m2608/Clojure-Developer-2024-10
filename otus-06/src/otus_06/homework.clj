@@ -1,4 +1,6 @@
-(ns otus-06.homework)
+(ns otus-06.homework
+  (:require [clojure.string :as str]
+            [clojure.java.io :as io]))
 
 ;; Загрузить данные из трех файлов на диске.
 ;; Эти данные сформируют вашу базу данных о продажах.
@@ -94,3 +96,233 @@
 
 
 ;; Файлы находятся в папке otus-06/resources/homework
+
+; Файлы таблиц и соответствующие им описания схем.
+(def db-description
+  {:customers
+   {:path "homework/cust.txt"
+    :schema "<custID, name, address, phoneNumber>"}
+   :products
+   {:path "homework/prod.txt"
+    :schema "<prodID, itemDescription, unitCost>"}
+   :sales
+   {:path "homework/sales.txt"
+    :schema "<salesID, custID, prodID, itemCount>"}})
+
+(defn parse-schema
+  "Парсит схему таблицы, возвращает вектор из имён полей
+  или `nil` в случае ошибки."
+  [schema-line]
+  (when-let [m (re-matches #"^[<](.+)[>]$" schema-line)]
+    (mapv keyword (str/split (second m) #",[ ]*"))))
+
+; Парсим описания схем для удобства.
+(def db
+  (->> db-description
+       (map (fn [[table {path :path schema :schema}]]
+              [table {:path path :schema (parse-schema schema)}]))
+       (into {})))
+
+; Разделитель столбцов.
+(def delimiter #"[|]")
+
+(defn autocoerce
+  "Пробует привести значение последовательно к `Integer` и `BigDecimal`.
+  Если не получается, возвращает значение как есть."
+  [value]
+  (try (Integer. value)
+       (catch NumberFormatException _
+         (try (BigDecimal. value)
+              (catch NumberFormatException _ value)))))
+
+(defn parse-row
+  "Парсит строку по указанной схеме, возвращает мапу."
+  [schema line]
+  (zipmap schema (map autocoerce (str/split line delimiter))))
+
+(defn symb-line
+  "Возвращает строку, состоящую из `n` указанных символов."
+  [s n]
+  (apply str (repeat n s)))
+
+; Возвращает строку дефисов.
+(def dash-line (partial symb-line \-))
+
+; Возвращает строку пробелов.
+(def spaces (partial symb-line \space))
+
+(defmulti pad
+  "Выполняет паддинг значения в зависимости от его типа."
+  (fn [value _] (class value)))
+
+; Для чисел производится выравнивание по правому краю.
+(defmethod pad java.lang.Integer
+  [value padding]
+  (format (str "%" padding "d") value))
+
+(defmethod pad java.math.BigDecimal
+  [value padding]
+  (format (str "%" padding ".2f") value))
+
+; Кейворды приводятся к строке и центрируются.
+(defmethod pad clojure.lang.Keyword
+  [value padding]
+  (let [value (name value)
+        full (- padding (count value))
+        pref (quot full 2)
+        post (- full pref)]
+    (str (spaces pref) value (spaces post))))
+
+; Для остальных типов значений - выравнивание по левому краю.
+(defmethod pad :default
+  [value padding]
+  (str value (spaces (- padding (count (str value))))))
+
+(defn table-row
+  "Возвращает текстовое представление строки таблицы. Поля выводятся в
+  порядке, заданным в векторе `schema`. Ширина каждого поля задается в мапе `widths`."
+  [schema widths row]
+  (str "| " (str/join " | " (map (fn [col] (pad (row col) (widths col))) schema)) " |"))
+
+(defn table-header
+  "Возвращает текстовое представление заголовка таблицы."
+  [schema widths]
+  (str "| " (str/join " | " (map #(pad % (widths %)) schema)) " |"))
+
+(defn table-separator
+  "Возвращает декоративную строку, отделяющую заголовок таблицы от её содержимого."
+  [schema widths]
+  (str "+ " (str/join " + " (map (comp dash-line widths) schema)) " +"))
+
+(defn get-max-widths
+  "Считает максимальную ширину для всех колонок из списка строк (включая заголовок).
+  Возвращает мапу, где ключами будут названия колонок."
+  [schema rows]
+  (->> schema
+       (map (fn [col]
+              [col (apply max
+                          (count (name col))
+                          (map (comp count str col) rows))]))
+       (into {})))
+
+(defn select
+  "Выбирает из таблицы строки, для которых фильтрующая функция вернёт истину."
+  [db table-name filter-fn]
+  (->> (db table-name)
+       :path
+       io/resource
+       io/reader
+       line-seq
+       (map (partial parse-row (:schema (db table-name))))
+       (filter filter-fn)))
+
+(defn print-table
+  "Красиво печатает указанную таблицу."
+  [db table-name]
+  (let [schema (:schema (db table-name))
+        rows (select db table-name (constantly true))
+        widths (get-max-widths schema rows)]
+    (println (str "\n" (table-header    schema widths)
+                  "\n" (table-separator schema widths)
+                  "\n" (str/join "\n" (map (partial table-row schema widths) rows))))))
+
+(defn print-sales-for-customer
+  "Печатает сумму, потраченную указанным покупателем на все покупки."
+  [db customer-name]
+  (if-let [customer (last (select db :customers #(= (:name %) customer-name)))]
+    (->> (select db :sales #(= (:custID %) (:custID customer)))
+         (map (fn [sale]
+                (let [product (last (select db :products #(= (:prodID %) (:prodID sale))))]
+                  (* (:unitCost product) (:itemCount sale)))))
+         (reduce +)
+         (format "\n%s: $%.2f" customer-name)
+         println)
+    (println (format "\nCustomer \"%s\" not found." customer-name))))
+
+(defn print-sales-for-product
+  "Печатает количество проданных единиц указанного продукта."
+  [db product-name]
+  (if-let [product (last (select db :products #(= (:itemDescription %) product-name)))]
+    (->> (select db :sales #(= (:prodID %) (:prodID product)))
+         (map :itemCount)
+         (reduce +)
+         (format "\n%s: %d" product-name)
+         println)
+    (println (format "\nProduct \"%s\" not found." product-name))))
+
+(defn prompt
+  "Выводит приглашение и ожидает ввода пользователя."
+  [p]
+  (print p)
+  (flush)
+  (read-line))
+
+(defn get-menu
+  "Возвращает меню."
+  [db]
+  {:title "*** Sales Menu ***"
+   :exit "Exit"
+   :message "Enter option: "
+   :error "Unknown option number.\n"
+   :options
+   [{:name "Display Customer Table"   :fn (partial print-table db :customers)}
+    {:name "Display Product Table"    :fn (partial print-table db :products)}
+    {:name "Display Sales Table"      :fn (partial print-table db :sales)}
+    {:name "Total Sales for Customer" :fn #(print-sales-for-customer db (prompt "Enter customer name: "))}
+    {:name "Total Count for Product"  :fn #(print-sales-for-product  db (prompt "Enter product name: "))}]})
+
+(defn print-menu
+  "Печатает на экран меню."
+  [menu]
+  (print (str/join "\n"
+                   [(:title menu)
+                    (dash-line (count (:title menu)))
+                    (str/join "\n" (map-indexed
+                                     (fn [i {name :name}]
+                                       (format "%d. %s" (inc i) name))
+                                     (:options menu)))
+                    (format "%d. %s" (inc (count (:options menu))) (:exit menu))
+                    ""
+                    (:message menu)]))
+  (flush))
+
+(defn read-number
+  "Читает число из стандартного ввода и парсит его, возвращает `nil` в случае
+  ошибки парсинга."
+  []
+  (try (Integer/parseInt (read-line))
+       (catch NumberFormatException _)))
+
+(defn main-loop
+  "Показывает меню и выполняет действия в зависимости от выбора пользователя."
+  [menu]
+  (loop []
+    (print-menu menu)
+    (let [option (read-number)]
+      (cond
+        ;; Не удалось распарсить номер опции. Скорее всего, введено не число.
+        ;; Показываем текст ошибки.
+        (nil? option)
+        (do (println (:error menu))
+            (recur))
+
+        ;; Выбран один из пунктов меню. Вызваем функцию, которая определена в
+        ;; меню.
+        (<= 1 option (count (:options menu)))
+        (do
+          ((-> menu :options (nth (dec option)) :fn))
+          (println)
+          (recur))
+        
+        ;; Выбрана опция выхода. Ничего не делаем, выходим.
+        (= option (inc (count (:options menu))))
+        nil
+        
+        ;; В остальных ситуациях выводим сообщение об ошибке.
+        :else
+        (do (println (:error menu))
+            (recur))))))
+
+(defn -main
+  []
+  (main-loop (get-menu db)))
