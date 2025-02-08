@@ -6,5 +6,5 @@
   :target-path "target/%s"
   :profiles {:dev {}
              :uberjar {:aot :all
-                       :jvm-opts ["-Dclojure.compiler.direct-linking=true"]}})
-
+                       :jvm-opts ["-Dclojure.compiler.direct-linking=true"]}
+             :test {:resource-paths ["test/otus_10/resources"]}})
